@@ -1,9 +1,9 @@
 # TradePulse – Database Design
 
-**Version:** 1.0  
-**Status:** Initial Design  
+**Version:** 1.1  
+**Status:** Updated Design  
 **Database:** PostgreSQL 17  
-**ORM:** SQLAlchemy 2.0  
+**ORM:** SQLAlchemy 2.x  
 **Migration Tool:** Alembic
 
 ---
@@ -12,11 +12,12 @@
 
 PostgreSQL is the primary relational database for TradePulse.
 
-SQLAlchemy ORM 2.0 will be used to define entities, relationships, and database operations. Alembic will manage schema migrations.
+SQLAlchemy ORM 2.x will be used to define entities, relationships, and database operations. Alembic will manage schema migrations.
 
 The database must support:
 
 - User accounts and authentication.
+- Role-based access control.
 - Multiple portfolios per user.
 - Supported investment assets.
 - Simulated buy and sell transactions.
@@ -37,10 +38,12 @@ The database must support:
 8. Associate private financial records with their owners.
 9. Use database migrations for schema changes.
 10. Avoid storing redundant calculated values unless there is a clear performance requirement.
+11. Enforce valid user roles through database constraints.
+12. Preserve asset records referenced by historical transactions.
 
 ## 3. Entity Relationship Overview
 
-The initial database will contain the following core entities:
+The database will contain the following core entities:
 
 - users
 - portfolios
@@ -49,7 +52,7 @@ The initial database will contain the following core entities:
 - holdings
 - market_prices
 
-### Entity Relationships
+### 3.1 Entity Relationships
 
 ```mermaid
 erDiagram
@@ -65,6 +68,7 @@ erDiagram
         varchar full_name
         varchar email UK
         varchar password_hash
+        varchar role
         timestamptz created_at
     }
 
@@ -74,19 +78,22 @@ erDiagram
         varchar name
         text description
         varchar base_currency
+        numeric initial_cash_balance
+        numeric cash_balance
         timestamptz created_at
         timestamptz updated_at
     }
 
     ASSETS {
         int id PK
-        varchar symbol
+        varchar symbol UK
         varchar name
         varchar asset_type
-        varchar provider_asset_id
-        varchar quote_currency
+        varchar exchange
+        varchar currency
         boolean is_active
         timestamptz created_at
+        timestamptz updated_at
     }
 
     TRANSACTIONS {
@@ -127,7 +134,7 @@ erDiagram
 
 ### 4.1 users
 
-Stores user account information.
+Stores user account information and authorization roles.
 
 | Column | PostgreSQL Type | Constraints |
 |---|---|---|
@@ -135,58 +142,108 @@ Stores user account information.
 | full_name | VARCHAR(100) | NOT NULL |
 | email | VARCHAR(255) | NOT NULL, UNIQUE |
 | password_hash | VARCHAR(255) | NOT NULL |
-| created_at | TIMESTAMPTZ | NOT NULL, default NOW() |
+| role | VARCHAR(20) | NOT NULL, DEFAULT 'USER' |
+| created_at | TIMESTAMPTZ | NOT NULL, DEFAULT NOW() |
 
-Current implementation status: Implemented.
+**Role constraint:**
+
+```sql
+CHECK (role IN ('ADMIN', 'USER'))
+```
+
+**Role definitions:**
+
+| Role | Responsibility |
+|---|---|
+| ADMIN | Platform administration and asset catalog management |
+| USER | Portfolio management and investment activities |
+
+**Business rules:**
+
+- Every user must have a valid role.
+- New registrations receive the `USER` role by default.
+- Public registration must not allow users to select their role.
+- Initial ADMIN accounts are provisioned through a controlled manual database operation.
+- Role values must be restricted to `ADMIN` and `USER`.
+- ADMIN and USER responsibilities are strictly separated.
+- ADMIN accounts cannot access portfolio management or paper-trading operations under the initial authorization model.
+
+**Current implementation status:** Implemented.
 
 ### 4.2 portfolios
 
-Stores portfolios created by users.
+Stores portfolios created by USER accounts.
 
 | Column | PostgreSQL Type | Constraints |
 |---|---|---|
-| id | BIGINT | Primary key |
-| user_id | INTEGER | Foreign key to users.id |
+| id | INTEGER | Primary key |
+| user_id | INTEGER | Foreign key to users.id, NOT NULL |
 | name | VARCHAR(100) | NOT NULL |
 | description | TEXT | Nullable |
-| base_currency | VARCHAR(10) | NOT NULL |
+| base_currency | VARCHAR(3) | NOT NULL, DEFAULT 'USD' |
+| initial_cash_balance | NUMERIC(20,2) | NOT NULL, DEFAULT 100000.00 |
+| cash_balance | NUMERIC(20,2) | NOT NULL, DEFAULT 100000.00 |
 | created_at | TIMESTAMPTZ | NOT NULL |
 | updated_at | TIMESTAMPTZ | NOT NULL |
 
-Business rules:
+**Business rules:**
 
-- A user can create multiple portfolios.
+- A USER can create multiple portfolios.
 - Every portfolio belongs to exactly one user.
 - A user cannot access another user's portfolio.
-- Portfolio names should be validated.
+- ADMIN accounts cannot manage portfolios.
+- Portfolio names must be validated.
 - Base currency determines the currency used for portfolio-level reporting.
+- Initial cash balance represents the portfolio's starting virtual cash.
+- Cash balance represents the current available virtual cash.
+- Portfolio deletion must follow a defined policy for associated transactions and holdings.
+
+**Current implementation status:** Implemented. CRUD APIs and ownership validation have been tested. USER-only role authorization requires final verification.
 
 ### 4.3 assets
 
-Stores supported investment assets.
+Stores the platform's supported investment assets.
+
+Asset records are shared platform resources and are not owned by individual users.
 
 | Column | PostgreSQL Type | Constraints |
 |---|---|---|
-| id | BIGINT | Primary key |
-| symbol | VARCHAR(30) | NOT NULL |
+| id | INTEGER | Primary key |
+| symbol | VARCHAR(20) | NOT NULL, UNIQUE |
 | name | VARCHAR(150) | NOT NULL |
-| asset_type | VARCHAR(30) | NOT NULL |
-| provider_asset_id | VARCHAR(150) | Nullable |
-| quote_currency | VARCHAR(10) | NOT NULL |
-| is_active | BOOLEAN | NOT NULL |
+| asset_type | VARCHAR(20) | NOT NULL |
+| exchange | VARCHAR(50) | Nullable |
+| currency | VARCHAR(3) | NOT NULL, DEFAULT 'USD' |
+| is_active | BOOLEAN | NOT NULL, DEFAULT TRUE |
 | created_at | TIMESTAMPTZ | NOT NULL |
+| updated_at | TIMESTAMPTZ | NOT NULL |
 
-Initial asset categories:
+**Asset type constraint:**
 
-- CRYPTO
+```sql
+CHECK (asset_type IN ('STOCK', 'CRYPTO'))
+```
+
+**Initial asset categories:**
+
 - STOCK
-- ETF
+- CRYPTO
 
-Business rules:
+Additional asset categories, such as ETF, may be introduced when supported by the application and market-data provider.
 
-- Symbols and provider identifiers must be handled according to the selected market-data provider.
-- Asset records should not be deleted if referenced by historical transactions.
+**Business rules:**
+
+- Asset symbols must be unique in the initial implementation.
+- Asset symbols should be normalized to uppercase.
+- ADMIN accounts can create and update assets.
+- ADMIN accounts can activate or deactivate assets.
+- USER accounts can view the asset catalog.
+- USER accounts cannot create, update, or deactivate assets.
 - Inactive assets must not be available for new transactions.
+- Asset records should not be physically deleted if referenced by historical transactions.
+- Asset deactivation should use the `is_active` flag.
+
+**Current implementation status:** Database model, migration, schemas, and service layer implemented. API authorization and endpoint testing are pending final verification.
 
 ### 4.4 transactions
 
@@ -206,18 +263,18 @@ Stores simulated trading activity.
 | executed_at | TIMESTAMPTZ | NOT NULL |
 | created_at | TIMESTAMPTZ | NOT NULL |
 
-Transaction types:
+**Transaction types:**
 
 - BUY
 - SELL
 
-Initial status:
+**Initial status:**
 
 - EXECUTED
 
 Additional statuses may be introduced if order simulation requires pending, rejected, or cancelled states.
 
-Business rules:
+**Business rules:**
 
 - Quantity must be greater than zero.
 - Unit price must be greater than zero.
@@ -236,6 +293,8 @@ SELL proceeds = quantity × unit_price − fees
 
 The system must retain enough information to reproduce transaction calculations.
 
+**Current implementation status:** Planned.
+
 ### 4.5 holdings
 
 Stores the current position of an asset in a portfolio.
@@ -249,7 +308,7 @@ Stores the current position of an asset in a portfolio.
 | average_buy_price | NUMERIC(28,10) | NOT NULL |
 | updated_at | TIMESTAMPTZ | NOT NULL |
 
-Constraints:
+**Constraints:**
 
 - Unique combination of portfolio_id and asset_id.
 - Quantity cannot be negative.
@@ -258,6 +317,8 @@ Constraints:
 Holdings are derived from executed transactions and maintained as a transactional position projection. Transaction history remains the source of truth.
 
 Portfolio transactions and corresponding holdings updates must occur within a database transaction.
+
+**Current implementation status:** Planned.
 
 ### 4.6 market_prices
 
@@ -273,7 +334,7 @@ Stores market price observations.
 | price_timestamp | TIMESTAMPTZ | NOT NULL |
 | created_at | TIMESTAMPTZ | NOT NULL |
 
-Business rules:
+**Business rules:**
 
 - Price must be greater than zero.
 - Provider information must be preserved.
@@ -281,47 +342,61 @@ Business rules:
 - Historical prices should not be overwritten by new observations.
 - The application must identify stale or unavailable market prices.
 
+**Current implementation status:** Planned.
+
 ## 5. Database Relationships
 
-### User to Portfolio
+### 5.1 User to Portfolio
 
 One user can own multiple portfolios.
 
 Relationship:
 
+```text
 users.id → portfolios.user_id
+```
 
-### Portfolio to Transactions
+Ownership must be validated through the authenticated user.
+
+### 5.2 Portfolio to Transactions
 
 One portfolio can contain multiple transactions.
 
 Relationship:
 
+```text
 portfolios.id → transactions.portfolio_id
+```
 
-### Asset to Transactions
+### 5.3 Asset to Transactions
 
 One asset can appear in multiple transactions.
 
 Relationship:
 
+```text
 assets.id → transactions.asset_id
+```
 
-### Portfolio to Holdings
+### 5.4 Portfolio to Holdings
 
 One portfolio can contain multiple asset holdings.
 
 Relationship:
 
+```text
 portfolios.id → holdings.portfolio_id
+```
 
-### Asset to Market Prices
+### 5.5 Asset to Market Prices
 
 One asset can have multiple historical price records.
 
 Relationship:
 
+```text
 assets.id → market_prices.asset_id
+```
 
 ## 6. Financial Data Handling
 
@@ -349,8 +424,10 @@ Initial indexes:
 | Table | Index | Purpose |
 |---|---|---|
 | users | Unique email | User lookup |
+| users | role | Optional role-based filtering |
 | portfolios | user_id | Retrieve user portfolios |
-| assets | symbol | Asset lookup |
+| assets | id | Asset primary-key lookup |
+| assets | symbol | Unique asset lookup |
 | transactions | portfolio_id | Transaction history |
 | transactions | asset_id | Asset transaction history |
 | holdings | portfolio_id, asset_id | Unique portfolio position |
@@ -365,6 +442,10 @@ Indexes will be reviewed based on actual query patterns and performance measurem
 - Referenced assets should generally be deactivated rather than removed.
 - Portfolio deletion must follow a defined policy for associated transactions and holdings.
 - Database constraints must enforce important integrity rules.
+- User roles must be restricted to supported values.
+- Role assignment must be controlled and must not be exposed through public registration.
+- Asset catalog records are shared platform resources.
+- Portfolio ownership must be enforced independently of role authorization.
 
 ## 9. Future Database Extensions
 
@@ -395,22 +476,29 @@ Rules:
 3. Never modify an already-applied migration as a normal schema update.
 4. Test migrations before production deployment.
 5. Preserve data during schema evolution.
+6. Add database constraints for important business rules.
+7. Ensure new columns added to existing tables have safe defaults or appropriate backfill procedures.
 
 ## 11. Current Implementation Status
 
-Implemented:
-
-- users table.
-- SQLAlchemy ORM foundation.
-- Alembic migration infrastructure.
-
-Planned:
-
-- portfolios.
-- assets.
-- transactions.
-- holdings.
-- market_prices.
+| Component | Status |
+|---|---|
+| PostgreSQL database | Implemented |
+| SQLAlchemy ORM foundation | Implemented |
+| Alembic migration infrastructure | Implemented |
+| users table | Implemented |
+| User role column and constraint | Implemented |
+| Centralized role definitions | Implemented |
+| portfolios table | Implemented |
+| Portfolio CRUD APIs | Implemented |
+| Portfolio ownership validation | Implemented and tested |
+| assets table | Implemented |
+| Asset schemas and service layer | Implemented |
+| Asset API role authorization | Pending final verification |
+| Portfolio USER-only authorization | Pending final verification |
+| transactions table | Planned |
+| holdings table | Planned |
+| market_prices table | Planned |
 
 ---
 

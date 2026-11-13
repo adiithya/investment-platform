@@ -8,6 +8,7 @@ import jwt
 from app.core.config import settings
 from app.database.session import get_db
 from app.models.user import User
+from app.constants.roles import UserRole
 
 
 bearer_scheme = HTTPBearer(auto_error=False)
@@ -52,3 +53,23 @@ def get_current_user(
 
     except (InvalidTokenError, ValueError, TypeError):
         raise unauthorized
+
+
+
+def require_role(required_role: str):
+    def role_checker(
+        current_user: User = Depends(get_current_user),
+    ) -> User:
+        if current_user.role != required_role:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"{required_role} access required",
+            )
+
+        return current_user
+
+    return role_checker
+
+
+require_admin = require_role(UserRole.ADMIN.value)
+require_user = require_role(UserRole.USER.value)

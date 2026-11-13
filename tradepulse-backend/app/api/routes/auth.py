@@ -60,7 +60,8 @@ def login(
         )
 
         access_token = create_access_token(
-            user_id=user.id
+            user_id=user.id,
+            role=user.role
         )
 
         return TokenResponse(

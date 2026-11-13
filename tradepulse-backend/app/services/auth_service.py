@@ -3,11 +3,9 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.models.user import User
+from app.constants.roles import UserRole
 from app.schemas.user import UserCreate
-from app.core.security import hash_password
-
-from app.models.user import User
-from app.core.security import verify_password
+from app.core.security import hash_password, verify_password
 
 
 class DuplicateEmailError(Exception):
@@ -40,7 +38,8 @@ def register_user(
     new_user = User(
         full_name=user_data.full_name.strip(),
         email=email,
-        password_hash=hashed_password
+        password_hash=hashed_password,
+        role=UserRole.USER.value
     )
 
     try:

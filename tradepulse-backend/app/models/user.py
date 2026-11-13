@@ -1,39 +1,42 @@
-from datetime import datetime
 
-from sqlalchemy import String, DateTime
-from sqlalchemy.orm import Mapped, mapped_column
-from sqlalchemy.sql import func
+from sqlalchemy import (
+    CheckConstraint,
+    Column,
+    DateTime,
+    Integer,
+    String,
+    func,
+)
 
 from app.database.base import Base
+from app.constants.roles import UserRole
 
 
 class User(Base):
-
     __tablename__ = "users"
 
-    id: Mapped[int] = mapped_column(
-        primary_key=True,
-        index=True
+    __table_args__ = (
+        CheckConstraint(
+            f"role IN ('{UserRole.ADMIN.value}', '{UserRole.USER.value}')",
+            name="check_user_role",
+        ),
     )
 
-    full_name: Mapped[str] = mapped_column(
-        String(100),
-        nullable=False
-    )
+    id = Column(Integer, primary_key=True, index=True)
 
-    email: Mapped[str] = mapped_column(
-        String(255),
-        unique=True,
+    full_name = Column(String(100), nullable=False)
+    email = Column(String(255), unique=True, nullable=False, index=True)
+    password_hash = Column(String(255), nullable=False)
+
+    role = Column(
+        String(20),
         nullable=False,
-        index=True
+        default=UserRole.USER.value,
+        server_default=UserRole.USER.value,
     )
 
-    password_hash: Mapped[str] = mapped_column(
-        String(255),
-        nullable=False
-    )
-
-    created_at: Mapped[datetime] = mapped_column(
+    created_at = Column(
         DateTime(timezone=True),
-        server_default=func.now()
+        server_default=func.now(),
+        nullable=False,
     )

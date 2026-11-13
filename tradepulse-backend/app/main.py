@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 
 from app.api.routes import health, auth
+from app.api.routes.portfolios import router as portfolios_router
 
 
 app = FastAPI(
@@ -20,6 +21,11 @@ app.include_router(
     auth.router,
     prefix="/api/auth",
     tags=["Authentication"]
+)
+
+app.include_router(
+    portfolios_router, 
+    prefix="/api"
 )
 
 
